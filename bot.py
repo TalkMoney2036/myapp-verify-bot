@@ -13,6 +13,7 @@ if not TOKEN:
 
 bot = telebot.TeleBot(TOKEN)
 
+# Stores generated validation codes
 codes = {}
 
 def generate_code():
@@ -20,7 +21,7 @@ def generate_code():
 
 @bot.message_handler(commands=['start', 'verify'])
 def send_verify_code(message):
-    user_id = message.from_user.id
+    user_id = message.from_user.id # This is always an integer
     
     code = generate_code()
     while code in codes:
@@ -60,7 +61,9 @@ def verify_code(code, user_id):
     if entry["expires"] < time.time():
         del codes[code]
         return False
-    if entry["user_id"] != user_id:
+        
+    # FIX: Convert both to integers to prevent string vs int comparison bugs
+    if int(entry["user_id"]) != int(user_id):
         return False
     
     entry["used"] = True
@@ -68,31 +71,40 @@ def verify_code(code, user_id):
 
 app = Flask(__name__)
 
+# Android App sends POST requests here
 @app.route('/verify', methods=['POST'])
 def verify():
     data = request.json
+    if not data:
+        return jsonify({"valid": False, "error": "Invalid JSON format"}), 400
+        
     code = data.get('code', '').strip().upper()
     telegram_user_id = data.get('telegram_user_id')
     
     if not code or not telegram_user_id:
-        return jsonify({"valid": False, "error": "Missing code or user_id"}), 400
+        return jsonify({"valid": False, "error": "Missing code or telegram_user_id"}), 400
     
-    is_valid = verify_code(code, telegram_user_id)
+    try:
+        is_valid = verify_code(code, telegram_user_id)
+    except ValueError:
+        return jsonify({"valid": False, "error": "Invalid user ID layout format"}), 400
     
     if is_valid:
         return jsonify({"valid": True, "message": "Code verified successfully"})
     else:
         return jsonify({"valid": False, "error": "Invalid, expired, or already used code"})
 
+# Render Health Check URL (GET Request)
 @app.route('/')
 def health():
-    return "Bot is running", 200
+    return "Bot status: Running cleanly", 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
 
 if __name__ == "__main__":
+    # Start the web service server in a separate thread background process
     threading.Thread(target=run_flask, daemon=True).start()
-    print("Bot is running...")
+    print("Bot backend web service initialized configuration successfully...")
     bot.infinity_polling()
